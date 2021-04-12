@@ -1,180 +1,176 @@
-// timothee.cpp : Définit le point d'entrée de l'application.
-//
+#include <windows.h>
+#include <d2d1.h>
+#pragma comment(lib, "d2d1")
 
-#include "framework.h"
-#include "timothee.h"
+#include "basewin.h"
 
-#define MAX_LOADSTRING 100
-
-// Variables globales :
-HINSTANCE hInst;                                // instance actuelle
-WCHAR szTitle[MAX_LOADSTRING];                  // Texte de la barre de titre
-WCHAR szWindowClass[MAX_LOADSTRING];            // nom de la classe de fenêtre principale
-
-// Déclarations anticipées des fonctions incluses dans ce module de code :
-ATOM                MyRegisterClass(HINSTANCE hInstance);
-BOOL                InitInstance(HINSTANCE, int);
-LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
-
-int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
-                     _In_opt_ HINSTANCE hPrevInstance,
-                     _In_ LPWSTR    lpCmdLine,
-                     _In_ int       nCmdShow)
+template <class T> void SafeRelease(T** ppT)
 {
-    UNREFERENCED_PARAMETER(hPrevInstance);
-    UNREFERENCED_PARAMETER(lpCmdLine);
+	if (*ppT)
+	{
+		(*ppT)->Release();
+		*ppT = NULL;
+	}
+}
 
-    // TODO: Placez le code ici.
+class MainWindow : public BaseWindow<MainWindow>
+{
+	ID2D1Factory* pFactory;
+	ID2D1HwndRenderTarget* pRenderTarget;
+	ID2D1SolidColorBrush* pBrush;
+	D2D1_ELLIPSE            ellipse;
 
-    // Initialise les chaînes globales
-    LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
-    LoadStringW(hInstance, IDC_TIMOTHEE, szWindowClass, MAX_LOADSTRING);
-    MyRegisterClass(hInstance);
+	void    CalculateLayout();
+	HRESULT CreateGraphicsResources();
+	void    DiscardGraphicsResources();
+	void    OnPaint();
+	void    Resize();
 
-    // Effectue l'initialisation de l'application :
-    if (!InitInstance (hInstance, nCmdShow))
+public:
+
+	MainWindow() : pFactory(NULL), pRenderTarget(NULL), pBrush(NULL)
     {
-        return FALSE;
     }
 
-    HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_TIMOTHEE));
+    PCWSTR  ClassName() const { return L"Circle Window Class"; }
+    LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam);
+};
 
-    MSG msg;
+// Recalculate drawing layout when the size of the window changes.
 
-    // Boucle de messages principale :
-    while (GetMessage(&msg, nullptr, 0, 0))
+void MainWindow::CalculateLayout()
+{
+    if (pRenderTarget != NULL)
     {
-        if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg))
-        {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }
+        D2D1_SIZE_F size = pRenderTarget->GetSize();
+        const float x = size.width / 2;
+        const float y = size.height / 2;
+        const float radius = min(x, y);
+        ellipse = D2D1::Ellipse(D2D1::Point2F(x, y), radius, radius);
     }
-
-    return (int) msg.wParam;
 }
 
-
-
-//
-//  FONCTION : MyRegisterClass()
-//
-//  OBJECTIF : Inscrit la classe de fenêtre.
-//
-ATOM MyRegisterClass(HINSTANCE hInstance)
+HRESULT MainWindow::CreateGraphicsResources()
 {
-    WNDCLASSEXW wcex;
-
-    wcex.cbSize = sizeof(WNDCLASSEX);
-
-    wcex.style          = CS_HREDRAW | CS_VREDRAW;
-    wcex.lpfnWndProc    = WndProc;
-    wcex.cbClsExtra     = 0;
-    wcex.cbWndExtra     = 0;
-    wcex.hInstance      = hInstance;
-    wcex.hIcon          = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_TIMOTHEE));
-    wcex.hCursor        = LoadCursor(nullptr, IDC_ARROW);
-    wcex.hbrBackground  = (HBRUSH)(COLOR_WINDOW+1);
-    wcex.lpszMenuName   = MAKEINTRESOURCEW(IDC_TIMOTHEE);
-    wcex.lpszClassName  = szWindowClass;
-    wcex.hIconSm        = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
-
-    return RegisterClassExW(&wcex);
-}
-
-//
-//   FONCTION : InitInstance(HINSTANCE, int)
-//
-//   OBJECTIF : enregistre le handle d'instance et crée une fenêtre principale
-//
-//   COMMENTAIRES :
-//
-//        Dans cette fonction, nous enregistrons le handle de l'instance dans une variable globale, puis
-//        nous créons et affichons la fenêtre principale du programme.
-//
-BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
-{
-   hInst = hInstance; // Stocke le handle d'instance dans la variable globale
-
-   HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
-      CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
-
-   if (!hWnd)
-   {
-      return FALSE;
-   }
-
-   ShowWindow(hWnd, nCmdShow);
-   UpdateWindow(hWnd);
-
-   return TRUE;
-}
-
-//
-//  FONCTION : WndProc(HWND, UINT, WPARAM, LPARAM)
-//
-//  OBJECTIF : Traite les messages pour la fenêtre principale.
-//
-//  WM_COMMAND  - traite le menu de l'application
-//  WM_PAINT    - Dessine la fenêtre principale
-//  WM_DESTROY  - génère un message d'arrêt et retourne
-//
-//
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-{
-    switch (message)
+    HRESULT hr = S_OK;
+    if (pRenderTarget == NULL)
     {
-    case WM_COMMAND:
+        RECT rc;
+        GetClientRect(m_hwnd, &rc);
+
+        D2D1_SIZE_U size = D2D1::SizeU(rc.right, rc.bottom);
+
+        hr = pFactory->CreateHwndRenderTarget(
+            D2D1::RenderTargetProperties(),
+            D2D1::HwndRenderTargetProperties(m_hwnd, size),
+            &pRenderTarget);
+
+        if (SUCCEEDED(hr))
         {
-            int wmId = LOWORD(wParam);
-            // Analyse les sélections de menu :
-            switch (wmId)
+            const D2D1_COLOR_F color = D2D1::ColorF(1.0f, 1.0f, 0);
+            hr = pRenderTarget->CreateSolidColorBrush(color, &pBrush);
+
+            if (SUCCEEDED(hr))
             {
-            case IDM_ABOUT:
-                DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
-                break;
-            case IDM_EXIT:
-                DestroyWindow(hWnd);
-                break;
-            default:
-                return DefWindowProc(hWnd, message, wParam, lParam);
+                CalculateLayout();
             }
         }
-        break;
-    case WM_PAINT:
-        {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hWnd, &ps);
-            // TODO: Ajoutez ici le code de dessin qui utilise hdc...
-            EndPaint(hWnd, &ps);
-        }
-        break;
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        break;
-    default:
-        return DefWindowProc(hWnd, message, wParam, lParam);
     }
+    return hr;
+}
+
+void MainWindow::DiscardGraphicsResources()
+{
+    SafeRelease(&pRenderTarget);
+    SafeRelease(&pBrush);
+}
+
+void MainWindow::OnPaint()
+{
+    HRESULT hr = CreateGraphicsResources();
+    if (SUCCEEDED(hr))
+    {
+        PAINTSTRUCT ps;
+        BeginPaint(m_hwnd, &ps);
+
+        pRenderTarget->BeginDraw();
+
+        pRenderTarget->Clear(D2D1::ColorF(D2D1::ColorF::SkyBlue));
+        pRenderTarget->FillEllipse(ellipse, pBrush);
+        hr = pRenderTarget->EndDraw();
+        if (FAILED(hr) || hr == D2DERR_RECREATE_TARGET)
+        {
+            DiscardGraphicsResources();
+        }
+        EndPaint(m_hwnd, &ps);
+    }
+}
+
+void MainWindow::Resize()
+{
+    if (pRenderTarget != NULL)
+    {
+        RECT rc;
+        GetClientRect(m_hwnd, &rc);
+
+        D2D1_SIZE_U size = D2D1::SizeU(rc.right, rc.bottom);
+
+        pRenderTarget->Resize(size);
+        CalculateLayout();
+        InvalidateRect(m_hwnd, NULL, FALSE);
+    }
+}
+
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
+{
+    MainWindow win;
+
+    if (!win.Create(L"Circle", WS_OVERLAPPEDWINDOW))
+    {
+        return 0;
+    }
+
+    ShowWindow(win.Window(), nCmdShow);
+
+    // Run the message loop.
+
+    MSG msg = { };
+    while (GetMessage(&msg, NULL, 0, 0))
+    {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
     return 0;
 }
 
-// Gestionnaire de messages pour la boîte de dialogue À propos de.
-INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+LRESULT MainWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-    UNREFERENCED_PARAMETER(lParam);
-    switch (message)
+    switch (uMsg)
     {
-    case WM_INITDIALOG:
-        return (INT_PTR)TRUE;
-
-    case WM_COMMAND:
-        if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
+    case WM_CREATE:
+        if (FAILED(D2D1CreateFactory(
+            D2D1_FACTORY_TYPE_SINGLE_THREADED, &pFactory)))
         {
-            EndDialog(hDlg, LOWORD(wParam));
-            return (INT_PTR)TRUE;
+            return -1;  // Fail CreateWindowEx.
         }
-        break;
+        return 0;
+
+    case WM_DESTROY:
+        DiscardGraphicsResources();
+        SafeRelease(&pFactory);
+        PostQuitMessage(0);
+        return 0;
+
+    case WM_PAINT:
+        OnPaint();
+        return 0;
+
+        // Other messages not shown...
+
+    case WM_SIZE:
+        Resize();
+        return 0;
     }
-    return (INT_PTR)FALSE;
+    return DefWindowProc(m_hwnd, uMsg, wParam, lParam);
 }
